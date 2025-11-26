@@ -35,6 +35,7 @@ jobs:
       # (GitHub จะสร้างโฟลเดอร์ core ให้ถ้ายังไม่มี แต่ใน repo เรามี core ว่างๆ อยู่แล้ว)
       - name: Create credentials file
         run: |
+          mkdir -p core
           echo '${{ secrets.GDRIVE_API_KEY }}' > core/credentials.json
 
       # 5. รันบอทของเรา!
