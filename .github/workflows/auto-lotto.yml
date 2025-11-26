@@ -1,0 +1,42 @@
+name: Auto Lottery Fetcher
+
+on:
+  # 1. ตั้งเวลาทำงาน (Cron Job)
+  # เวลาใน GitHub เป็น UTC (ช้ากว่าไทย 7 ชม.)
+  # เราอยากได้ 14:00 น. เมืองไทย (บ่ายสอง) -> เท่ากับ 07:00 UTC
+  # รันวันที่ 2 และ 17 ของทุกเดือน
+  schedule:
+    - cron: '0 7 2,17 * *'
+  
+  # 2. ปุ่มกดรันมือ (เผื่ออยากเทส หรือสั่งเก็บตก)
+  workflow_dispatch:
+
+jobs:
+  update-data:
+    runs-on: ubuntu-latest
+    
+    steps:
+      # 1. ดึงโค้ดล่าสุดมาจาก Repo
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      # 2. ติดตั้ง Python
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+
+      # 3. ลง Library ตามโพย
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+
+      # 4. สร้างไฟล์ credentials.json ขึ้นมาใหม่จาก Secret ที่เราฝากไว้
+      # (GitHub จะสร้างโฟลเดอร์ core ให้ถ้ายังไม่มี แต่ใน repo เรามี core ว่างๆ อยู่แล้ว)
+      - name: Create credentials file
+        run: |
+          echo '${{ secrets.GDRIVE_API_KEY }}' > core/credentials.json
+
+      # 5. รันบอทของเรา!
+      - name: Run Lottery Script
+        run: python lotteryData.py
