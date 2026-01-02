@@ -6,6 +6,7 @@ import json
 from datetime import datetime
 import pytz
 import re
+import uuid
 
 # --- Config ---
 GENAI_API_KEY = os.getenv('GEMINI_API_KEY')
@@ -49,17 +50,20 @@ def save_to_accounting_sheet(data):
 
         tz = pytz.timezone('Asia/Bangkok')
         now = datetime.now(tz)
+
+        tx_id = f"tx_{str(uuid.uuid4())[:8]}"
         
         sheet.append_row([
             now.strftime("%d/%m/%Y %H:%M"),
             data.get('type'),
             data.get('category'),
             float(data.get('amount', 0)),
-            data.get('note')
+            data.get('note'),
+            tx_id
         ])
         
         # ส่ง URL ของไฟล์กลับไปให้ผู้ใช้กดดูด้วย
-        return True, "", spreadsheet.url
+        return True, "", tx_id
         
     except Exception as e:
         return False, str(e), ""
@@ -178,11 +182,9 @@ def get_gemini_response(user_text, user_id):
                 
                 for item in data:
                     if item.get('action') == 'record':
-                        # รับ URL กลับมาด้วย
-                        success, error_msg, url = save_to_accounting_sheet(item)
+                        success, error_msg, tx_id = save_to_accounting_sheet(item)
                         
                         if success:
-                            file_url = url
                             update_summary(item)
                             recorded_items.append(f"- {item.get('note')}: {item.get('amount')} บาท")
                             total_amount += float(item.get('amount', 0))
