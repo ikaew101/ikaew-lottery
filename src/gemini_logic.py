@@ -152,7 +152,7 @@ def get_gemini_response(user_text, user_id):
         genai.configure(api_key=GENAI_API_KEY)
         model = genai.GenerativeModel(
             model_name='gemini-2.5-flash',
-            system_instruction=system_instruction
+            system_instruction=system_instruction,
             tools='google_search_retrieval'
         )
         
