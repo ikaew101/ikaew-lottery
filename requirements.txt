@@ -7,3 +7,4 @@ beautifulsoup4
 flask
 line-bot-sdk
 gunicorn
+google-generativeai

@@ -1,13 +1,16 @@
+# app.py
 from flask import Flask, request, abort
 from linebot import LineBotApi, WebhookHandler
 from linebot.exceptions import InvalidSignatureError
 from linebot.models import MessageEvent, TextMessage, TextSendMessage
-from src.bot_logic import get_prediction_message
 import os
+
+# Import ทั้ง 2 แผนก
+from src.bot_logic import get_prediction_message   # แผนกหวย
+from src.gemini_logic import get_gemini_response   # แผนกคุยเล่น (มาใหม่)
 
 app = Flask(__name__)
 
-# อ่านคีย์จาก Environment Variable (เดี๋ยวเราไปตั้งค่าใน Render)
 LINE_CHANNEL_ACCESS_TOKEN = os.getenv('LINE_CHANNEL_ACCESS_TOKEN')
 LINE_CHANNEL_SECRET = os.getenv('LINE_CHANNEL_SECRET')
 
@@ -16,7 +19,7 @@ handler = WebhookHandler(LINE_CHANNEL_SECRET)
 
 @app.route("/", methods=['GET'])
 def home():
-    return "Lottery Bot is Running!", 200
+    return "Super Bot is Running!", 200
 
 @app.route("/callback", methods=['POST'])
 def callback():
@@ -32,15 +35,22 @@ def callback():
 def handle_message(event):
     user_msg = event.message.text.strip()
     
-    # คำสั่งเรียกดูเลข
-    keywords = ["เลขเด็ด", "หวย", "วิเคราะห์", "แนวทาง", "help", "bot"]
+    # 1. เช็คว่าเป็นเรื่องหวยไหม?
+    lottery_keywords = ["เลขเด็ด", "หวย", "วิเคราะห์", "แนวทาง"]
     
-    if any(k in user_msg for k in keywords):
-        reply_msg = get_prediction_message()
-        line_bot_api.reply_message(
-            event.reply_token,
-            TextSendMessage(text=reply_msg)
-        )
+    if any(k in user_msg for k in lottery_keywords):
+        # ส่งไปแผนกหวย
+        reply_text = get_prediction_message()
+    else:
+        # 2. ถ้าไม่ใช่เรื่องหวย ให้ส่งไปคุยกับ Gemini
+        # (บอกให้ user รอแป๊บนึง เพราะ AI อาจคิดนาน)
+        reply_text = get_gemini_response(user_msg)
+        
+    # ส่งคำตอบกลับไป
+    line_bot_api.reply_message(
+        event.reply_token,
+        TextSendMessage(text=reply_text)
+    )
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
