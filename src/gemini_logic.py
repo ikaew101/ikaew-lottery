@@ -10,11 +10,11 @@ def get_gemini_response(user_text, user_id):
 
     try:
         # 1. ตั้งค่า API Key
-        genai.configure(api_key=GENAI_API_KEY)
+        genai.configure(api_key=GENAI_API_KEY, transport='rest')
         
         # 2. ระบุ Model แบบเจาะจง Full Path 
         # แนะนำ 'gemini-1.5-flash' ซึ่งเป็นรุ่นล่าสุดที่เสถียร
-        model = genai.GenerativeModel(model_name='gemini-1.5-flash')
+        model = genai.GenerativeModel('models/gemini-1.5-flash')
         
         # 3. ส่งข้อความ (สามารถเพิ่มการตั้งค่า Safety หรือ Generation Config ได้ที่นี่)
         response = model.generate_content(user_text)
@@ -25,9 +25,8 @@ def get_gemini_response(user_text, user_id):
             return "AI ได้รับข้อความ แต่ไม่สามารถสร้างคำตอบได้ในขณะนี้ครับ"
             
     except Exception as e:
-        # Fallback กรณีเวอร์ชันข้างบนมีปัญหา ให้ลองใช้รุ่น 1.0 Pro
         try:
-            fallback_model = genai.GenerativeModel(model_name='gemini-1.0-pro')
-            return fallback_model.generate_content(user_text).text
+            fallback = genai.GenerativeModel('models/gemini-1.5-pro')
+            return fallback.generate_content(user_text).text
         except:
-            return f"❌ เกิดข้อผิดพลาดจาก AI: {str(e)}"
+            return f"❌ ข้อผิดพลาด: {str(e)}"
