@@ -129,9 +129,9 @@ def get_total_summary(mode="simple"):
 def get_gemini_response(user_text, user_id):
     if not GENAI_API_KEY: return "⚠️ Missing API Key"
 
-    if "สรุปรายรับรายจ่าย" in user_text or "สรุปยอดเดือนนี้" in user_text:
+    if ("สรุป" in user_text or "ยอด" in user_text) and "เดือนนี้" in user_text and "หมวดหมู่" not in user_text:
         return get_total_summary(mode="simple")
-    if "แยกตามหมวดหมู่" in user_text:
+    if "หมวดหมู่" in user_text:
         return get_total_summary(mode="detail")
 
     try:
