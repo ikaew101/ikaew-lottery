@@ -9,3 +9,4 @@ line-bot-sdk
 gunicorn
 google-generativeai
 pytz
+oauth2client
