@@ -104,24 +104,34 @@ def get_lotto_result(date_obj):
 
 def fetch_current_year_data():
     current_year = datetime.now().year
-    print(f"🕵️ 2. Generating dates for {current_year} (Corrected Rules)...")
+    # [แก้ตรงนี้] ให้ดึงปีปัจจุบัน และ ปีก่อนหน้าด้วย (เพื่ออุดรูรั่วรอยต่อ)
+    years_to_fetch = [current_year - 1, current_year] 
     
-    # สร้างวันที่ตามกฎใหม่ (รวม 2 ม.ค.)
-    target_dates = generate_lotto_dates(current_year)
+    print(f"🕵️ 2. Crawler Working on years: {years_to_fetch} ...")
     
-    results = []
-    for i, d in enumerate(target_dates):
-        date_str = d.strftime('%d/%m/%Y')
-        print(f"   [{i+1}/{len(target_dates)}] Fetching: {date_str}", end="")
+    all_results = []
+    
+    for year in years_to_fetch:
+        print(f"   ... Generating dates for {year} ...")
+        target_dates = generate_lotto_dates(year)
         
-        res = get_lotto_result(d)
-        
-        if res:
-            print(f" ✅ -> {res.get('first_prize')} | {res.get('last_two_digits')}")
-            results.append(res)
-        else:
-            print(" ❌ Failed")
-        
-        time.sleep(random.uniform(2, 4))
-        
-    return pd.DataFrame(results)
+        for i, d in enumerate(target_dates):
+            # ข้ามวันในอนาคต
+            if d > datetime.now():
+                continue
+                
+            date_str = d.strftime('%d/%m/%Y')
+            print(f"   -> Fetching: {date_str}", end="")
+            
+            res = get_lotto_result(d)
+            
+            if res:
+                print(f" ✅ OK ({res.get('first_prize')})")
+                all_results.append(res)
+            else:
+                print(" ❌ Failed")
+            
+            # พักนิดนึง
+            time.sleep(random.uniform(1, 2))
+            
+    return pd.DataFrame(all_results)

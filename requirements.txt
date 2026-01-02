@@ -4,3 +4,6 @@ gspread
 oauth2client
 cloudscraper
 beautifulsoup4
+flask
+line-bot-sdk
+gunicorn
