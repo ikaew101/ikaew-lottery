@@ -2,7 +2,7 @@ from flask import Flask, request, abort
 from linebot import LineBotApi, WebhookHandler
 from linebot.exceptions import InvalidSignatureError
 from linebot.models import MessageEvent, TextMessage, TextSendMessage
-from services.bot_logic import get_prediction_message
+from src.bot_logic import get_prediction_message
 import os
 
 app = Flask(__name__)
