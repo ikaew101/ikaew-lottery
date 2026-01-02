@@ -12,7 +12,7 @@ def get_gemini_response(user_text):
         genai.configure(api_key=GENAI_API_KEY)
         
         # เลือกโมเดล (Gemini 1.5 Flash เร็วและเก่งพอตัว)
-        model = genai.GenerativeModel('gemini-1.5-flash')
+        model = genai.GenerativeModel('gemini-pro')
         
         # ส่งข้อความไปถาม
         response = model.generate_content(user_text)
