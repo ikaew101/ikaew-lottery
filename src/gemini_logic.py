@@ -31,23 +31,21 @@ def get_google_client():
 # --- Functions จัดการ Google Sheet ---
 
 def save_to_accounting_sheet(data):
-    """บันทึกข้อมูลและส่งคืนผลลัพธ์ (Success, Error Message)"""
+    """บันทึกข้อมูล (แบบระบุ Tab แม่นยำ ห้ามลง Sheet อื่น)"""
     try:
         client = get_google_client()
-        # เปิดไฟล์ชื่อ LotteryData
+        
+        # 1. เปิดไฟล์ LotteryData
         try:
             spreadsheet = client.open('LotteryData')
         except gspread.SpreadsheetNotFound:
-            return False, "หาไฟล์ Google Sheet ชื่อ 'LotteryData' ไม่เจอ"
+            return False, "หาไฟล์ชื่อ 'LotteryData' ไม่เจอ", ""
 
-        # เปิด Tab ชื่อ Accounting
+        # 2. เปิด Tab Accounting (ถ้าไม่เจอ ให้ Error เลย ห้ามไป Sheet1)
         try:
             sheet = spreadsheet.worksheet('Accounting')
         except gspread.WorksheetNotFound:
-            # พยายามบันทึกลง Sheet แรกแทน ถ้าหา Accounting ไม่เจอ
-            sheet = spreadsheet.sheet1
-            # (Optional) แจ้งเตือนเล็กน้อย
-            # return False, "หา Tab ชื่อ 'Accounting' ไม่เจอ (ลองแก้ชื่อ Tab ดูนะครับ)"
+            return False, "ไม่พบ Tab ชื่อ 'Accounting' ในไฟล์นี้ (กรุณาสร้าง Tab ชื่อ Accounting ให้ถูกต้องเป๊ะๆ)", ""
 
         tz = pytz.timezone('Asia/Bangkok')
         now = datetime.now(tz)
@@ -59,12 +57,14 @@ def save_to_accounting_sheet(data):
             float(data.get('amount', 0)),
             data.get('note')
         ])
-        return True, ""
+        
+        # ส่ง URL ของไฟล์กลับไปให้ผู้ใช้กดดูด้วย
+        return True, "", spreadsheet.url
+        
     except Exception as e:
-        return False, str(e)
+        return False, str(e), ""
 
 def update_summary(data):
-    """อัปเดตยอดสรุป"""
     try:
         client = get_google_client()
         sheet = client.open('LotteryData').worksheet('Summary')
@@ -82,10 +82,8 @@ def update_summary(data):
         
         if not found:
             sheet.append_row([month_str, data['type'], data['category'], float(data['amount'])])
-        return True
     except Exception as e:
         print(f"Summary Error: {e}")
-        return False
 
 def get_total_summary(mode="simple"):
     try:
@@ -139,11 +137,11 @@ def get_gemini_response(user_text, user_id):
         system_instruction = f"""
         คุณคือเลขาส่วนตัว 'My Assistant' เก่งบัญชี เวลา: {current_time}
         หน้าที่:
-        1. ถ้าผู้ใช้พิมพ์รายการเงิน (เช่น 'ซื้อข้าว 50') ให้ตอบ JSON Array:
+        1. ถ้าผู้ใช้พิมพ์รายการเงิน ตอบ JSON Array:
            [
              {{"action": "record", "type": "รายจ่าย/รายรับ", "category": "หมวดหมู่", "amount": ตัวเลข, "note": "รายละเอียด"}}
            ]
-           หมวดหมู่เลือกจาก: ['อาหาร', 'เดินทาง', 'ช้อปปิ้ง', 'ของใช้ส่วนตัว', 'ค่าบ้าน/รถ', 'บิลค่าน้ำไฟ', 'บันเทิง', 'สุขภาพ', 'เงินออม', 'รายรับ', 'อื่นๆ']
+           หมวดหมู่: ['อาหาร', 'เดินทาง', 'ช้อปปิ้ง', 'ของใช้ส่วนตัว', 'ค่าบ้าน/รถ', 'บิลค่าน้ำไฟ', 'บันเทิง', 'สุขภาพ', 'เงินออม', 'รายรับ', 'อื่นๆ']
         2. คำถามทั่วไปตอบปกติ
         """
 
@@ -176,24 +174,27 @@ def get_gemini_response(user_text, user_id):
                 recorded_items = []
                 failed_items = []
                 total_amount = 0
+                file_url = ""
                 
                 for item in data:
                     if item.get('action') == 'record':
-                        # [จุดสำคัญ] รับค่า error message กลับมาเช็ค
-                        success, error_msg = save_to_accounting_sheet(item)
+                        # รับ URL กลับมาด้วย
+                        success, error_msg, url = save_to_accounting_sheet(item)
                         
                         if success:
+                            file_url = url
                             update_summary(item)
                             recorded_items.append(f"- {item.get('note')}: {item.get('amount')} บาท")
                             total_amount += float(item.get('amount', 0))
                         else:
-                            failed_items.append(f"❌ บันทึกไม่ได้ ({error_msg})")
+                            failed_items.append(f"❌ บันทึกไม่ได้: {error_msg}")
                 
-                # สร้างข้อความตอบกลับ
                 reply_msg = ""
                 if recorded_items:
                     reply_msg += f"✅ จดบันทึกเรียบร้อย!\n" + "\n".join(recorded_items)
                     reply_msg += f"\n\nรวม: {total_amount:,.2f} บาท"
+                    # [สำคัญ] แสดงลิงก์ไฟล์ที่บันทึก
+                    reply_msg += f"\n\n📂 ดูไฟล์: {file_url}"
                 
                 if failed_items:
                     reply_msg += "\n\n" + "\n".join(failed_items)
