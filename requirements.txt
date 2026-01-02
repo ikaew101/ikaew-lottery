@@ -2,11 +2,11 @@ pandas
 requests
 gspread
 google-auth
+google-generativeai>=0.8.3
 cloudscraper
 beautifulsoup4
 flask
 line-bot-sdk
 gunicorn
-google-generativeai
 pytz
 oauth2client
