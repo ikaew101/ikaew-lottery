@@ -46,7 +46,7 @@ def handle_message(event):
     else:
         # 2. ถ้าไม่ใช่เรื่องหวย ให้ส่งไปคุยกับ Gemini
         # (บอกให้ user รอแป๊บนึง เพราะ AI อาจคิดนาน)
-        reply_text = get_gemini_response(user_msg)
+        reply_text = get_gemini_response(user_msg, user_id)
         
     # ส่งคำตอบกลับไป
     line_bot_api.reply_message(
