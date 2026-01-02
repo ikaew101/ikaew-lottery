@@ -1,6 +1,6 @@
 import google.generativeai as genai
 import gspread
-from google.oauth2.service_account import Credentials # ใช้ตัวใหม่ที่เสถียรกว่า
+from google.oauth2.service_account import Credentials
 import os
 import json
 from datetime import datetime
@@ -11,35 +11,47 @@ import re
 GENAI_API_KEY = os.getenv('GEMINI_API_KEY')
 
 def get_google_client():
-    """เชื่อมต่อกับ Google Sheets API ด้วยระบบ google-auth (New Standard)"""
+    """เชื่อมต่อ Google Sheets"""
     scopes = [
         "https://www.googleapis.com/auth/spreadsheets",
         "https://www.googleapis.com/auth/drive"
     ]
     
     try:
-        # กรณีใช้บน Render (ดึง JSON จาก Environment Variable)
         if os.getenv('GOOGLE_CREDENTIALS_JSON'):
             creds_dict = json.loads(os.getenv('GOOGLE_CREDENTIALS_JSON'))
             creds = Credentials.from_service_account_info(creds_dict, scopes=scopes)
-        
-        # กรณีรันบนเครื่องตัวเอง (ดึงจากไฟล์)
         else:
             creds = Credentials.from_service_account_file('core/credentials.json', scopes=scopes)
             
         return gspread.authorize(creds)
     except Exception as e:
-        print(f"Auth Error: {e}")
-        raise e
+        raise Exception(f"Auth Error: {str(e)}")
 
 # --- Functions จัดการ Google Sheet ---
 
 def save_to_accounting_sheet(data):
+    """บันทึกข้อมูลและส่งคืนผลลัพธ์ (Success, Error Message)"""
     try:
         client = get_google_client()
-        sheet = client.open('LotteryData').worksheet('Accounting')
+        # เปิดไฟล์ชื่อ LotteryData
+        try:
+            spreadsheet = client.open('LotteryData')
+        except gspread.SpreadsheetNotFound:
+            return False, "หาไฟล์ Google Sheet ชื่อ 'LotteryData' ไม่เจอ"
+
+        # เปิด Tab ชื่อ Accounting
+        try:
+            sheet = spreadsheet.worksheet('Accounting')
+        except gspread.WorksheetNotFound:
+            # พยายามบันทึกลง Sheet แรกแทน ถ้าหา Accounting ไม่เจอ
+            sheet = spreadsheet.sheet1
+            # (Optional) แจ้งเตือนเล็กน้อย
+            # return False, "หา Tab ชื่อ 'Accounting' ไม่เจอ (ลองแก้ชื่อ Tab ดูนะครับ)"
+
         tz = pytz.timezone('Asia/Bangkok')
         now = datetime.now(tz)
+        
         sheet.append_row([
             now.strftime("%d/%m/%Y %H:%M"),
             data.get('type'),
@@ -47,12 +59,12 @@ def save_to_accounting_sheet(data):
             float(data.get('amount', 0)),
             data.get('note')
         ])
-        return True
+        return True, ""
     except Exception as e:
-        print(f"Save Error: {e}")
-        return False
+        return False, str(e)
 
 def update_summary(data):
+    """อัปเดตยอดสรุป"""
     try:
         client = get_google_client()
         sheet = client.open('LotteryData').worksheet('Summary')
@@ -69,9 +81,11 @@ def update_summary(data):
                 break
         
         if not found:
-            sheet.append_row([month_str, data['type'], data['category'], float(data['amount'])])     
+            sheet.append_row([month_str, data['type'], data['category'], float(data['amount'])])
+        return True
     except Exception as e:
-        print(f"Summary Update Error: {e}")
+        print(f"Summary Error: {e}")
+        return False
 
 def get_total_summary(mode="simple"):
     try:
@@ -123,16 +137,14 @@ def get_gemini_response(user_text, user_id):
         current_time = datetime.now(tz).strftime("%d/%m/%Y %H:%M:%S")
         
         system_instruction = f"""
-        คุณคือเลขาส่วนตัว 'My Assistant' ที่ใจดีและเก่งบัญชี เวลา: {current_time}
-        
+        คุณคือเลขาส่วนตัว 'My Assistant' เก่งบัญชี เวลา: {current_time}
         หน้าที่:
-        1. ถ้าผู้ใช้พิมพ์รายการเงิน ให้ตอบ JSON เท่านั้น โดยเลือกหมวดหมู่ (category) จากรายการนี้เท่านั้น ห้ามคิดคำอื่น:
-           ['อาหาร', 'เดินทาง', 'ช้อปปิ้ง', 'ของใช้ส่วนตัว', 'ค่าบ้าน/รถ', 'บิลค่าน้ำไฟ', 'บันเทิง', 'สุขภาพ', 'เงินออม', 'รายรับ', 'อื่นๆ']
-           
-           รูปแบบ JSON:
-           {{"action": "record", "type": "รายจ่าย/รายรับ", "category": "เลือกจากรายการข้างบน", "amount": ตัวเลข, "note": "รายละเอียด"}}
-           
-        2. ถ้าเป็นคำถามทั่วไป ตอบตามปกติ สุภาพ เป็นกันเอง
+        1. ถ้าผู้ใช้พิมพ์รายการเงิน (เช่น 'ซื้อข้าว 50') ให้ตอบ JSON Array:
+           [
+             {{"action": "record", "type": "รายจ่าย/รายรับ", "category": "หมวดหมู่", "amount": ตัวเลข, "note": "รายละเอียด"}}
+           ]
+           หมวดหมู่เลือกจาก: ['อาหาร', 'เดินทาง', 'ช้อปปิ้ง', 'ของใช้ส่วนตัว', 'ค่าบ้าน/รถ', 'บิลค่าน้ำไฟ', 'บันเทิง', 'สุขภาพ', 'เงินออม', 'รายรับ', 'อื่นๆ']
+        2. คำถามทั่วไปตอบปกติ
         """
 
         genai.configure(api_key=GENAI_API_KEY)
@@ -143,20 +155,52 @@ def get_gemini_response(user_text, user_id):
         
         response = model.generate_content(user_text)
         res_text = response.text.strip()
-
         cleaned_text = re.sub(r'```json|```', '', res_text).strip()
-        start_index = cleaned_text.find('{')
-        end_index = cleaned_text.rfind('}') + 1
+        
+        start_index = -1
+        end_index = -1
+        
+        if '[' in cleaned_text and ']' in cleaned_text:
+            start_index = cleaned_text.find('[')
+            end_index = cleaned_text.rfind(']') + 1
+        elif '{' in cleaned_text and '}' in cleaned_text:
+            start_index = cleaned_text.find('{')
+            end_index = cleaned_text.rfind('}') + 1
 
         if start_index != -1 and end_index != -1:
             try:
                 json_str = cleaned_text[start_index:end_index]
                 data = json.loads(json_str)
+                if isinstance(data, dict): data = [data]
                 
-                if data.get('action') == 'record':
-                    save_to_accounting_sheet(data)
-                    update_summary(data)
-                    return f"✅ จดเรียบร้อย!\nรายการ: {data.get('note')}\nจำนวน: {data.get('amount')} บาท\nหมวด: {data.get('category')}"
+                recorded_items = []
+                failed_items = []
+                total_amount = 0
+                
+                for item in data:
+                    if item.get('action') == 'record':
+                        # [จุดสำคัญ] รับค่า error message กลับมาเช็ค
+                        success, error_msg = save_to_accounting_sheet(item)
+                        
+                        if success:
+                            update_summary(item)
+                            recorded_items.append(f"- {item.get('note')}: {item.get('amount')} บาท")
+                            total_amount += float(item.get('amount', 0))
+                        else:
+                            failed_items.append(f"❌ บันทึกไม่ได้ ({error_msg})")
+                
+                # สร้างข้อความตอบกลับ
+                reply_msg = ""
+                if recorded_items:
+                    reply_msg += f"✅ จดบันทึกเรียบร้อย!\n" + "\n".join(recorded_items)
+                    reply_msg += f"\n\nรวม: {total_amount:,.2f} บาท"
+                
+                if failed_items:
+                    reply_msg += "\n\n" + "\n".join(failed_items)
+                    
+                if reply_msg:
+                    return reply_msg
+                    
             except json.JSONDecodeError:
                 pass
         
