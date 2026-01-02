@@ -193,8 +193,6 @@ def get_gemini_response(user_text, user_id):
                 if recorded_items:
                     reply_msg += f"✅ จดบันทึกเรียบร้อย!\n" + "\n".join(recorded_items)
                     reply_msg += f"\n\nรวม: {total_amount:,.2f} บาท"
-                    # [สำคัญ] แสดงลิงก์ไฟล์ที่บันทึก
-                    reply_msg += f"\n\n📂 ดูไฟล์: {file_url}"
                 
                 if failed_items:
                     reply_msg += "\n\n" + "\n".join(failed_items)
