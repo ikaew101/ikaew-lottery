@@ -14,7 +14,7 @@ def get_gemini_response(user_text, user_id):
         
         # 2. ระบุ Model แบบเจาะจง Full Path 
         # แนะนำ 'gemini-1.5-flash' ซึ่งเป็นรุ่นล่าสุดที่เสถียร
-        model = genai.GenerativeModel(model_name='gemini-2.0-flash-exp')
+        model = genai.GenerativeModel(model_name='gemini-1.5-flash')
         
         # 3. ส่งข้อความ (สามารถเพิ่มการตั้งค่า Safety หรือ Generation Config ได้ที่นี่)
         response = model.generate_content(user_text)
