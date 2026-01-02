@@ -34,9 +34,11 @@ def callback():
 @handler.add(MessageEvent, message=TextMessage)
 def handle_message(event):
     user_msg = event.message.text.strip()
+
+    user_id = event.source.user_id
     
     # 1. เช็คว่าเป็นเรื่องหวยไหม?
-    lottery_keywords = ["เลขเด็ด", "หวย", "วิเคราะห์", "แนวทาง"]
+    lottery_keywords = ["เลขเด็ด", "หวย", "วิเคราะห์", "แนวทาง", "สถิติ"]
     
     if any(k in user_msg for k in lottery_keywords):
         # ส่งไปแผนกหวย
