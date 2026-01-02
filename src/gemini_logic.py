@@ -15,7 +15,7 @@ def get_gemini_response(user_text, user_id):
         
         # สร้าง Model โดยระบุชื่อแบบเต็ม เพื่อลดความผิดพลาดของ Library
         model = genai.GenerativeModel(
-            model_name='gemini-1.5-flash',
+            model_name='gemini-2.5-flash',
             # บังคับการส่งข้อมูลผ่าน gRPC หรือ REST ในเวอร์ชัน v1
         )
         
