@@ -6,94 +6,114 @@ import json
 from datetime import datetime
 import pytz
 
-# --- การตั้งค่าพื้นฐาน ---
 GENAI_API_KEY = os.getenv('GEMINI_API_KEY')
 
 def get_google_client():
-    """เชื่อมต่อกับ Google Sheets API"""
     scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-    # สำหรับใช้งานบน Render (ใส่ JSON ใน Environment Variable)
     if os.getenv('GOOGLE_CREDENTIALS_JSON'):
         creds_dict = json.loads(os.getenv('GOOGLE_CREDENTIALS_JSON'))
         return gspread.authorize(ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope))
-    # สำหรับใช้งาน Local
     return gspread.authorize(ServiceAccountCredentials.from_json_keyfile_name('core/credentials.json', scope))
 
-def save_to_accounting_sheet(data):
-    """ฟังก์ชันบันทึกข้อมูลรายรับ-รายจ่ายลง Sheet Accounting"""
+def update_summary(data):
+    """อัปเดตยอดรวมในหน้า Summary ทันทีที่มีการจดบันทึก"""
     try:
         client = get_google_client()
-        sheet = client.open('LotteryData').worksheet('Accounting')
-        
-        # ดึงเวลาปัจจุบันประเทศไทย
+        summary_sheet = client.open('LotteryData').worksheet('Summary')
         tz = pytz.timezone('Asia/Bangkok')
-        now = datetime.now(tz)
+        month_str = datetime.now(tz).strftime("%m/%Y")
         
-        # เพิ่มแถวข้อมูล: วันที่เวลา, ประเภท, หมวดหมู่, จำนวนเงิน, หมายเหตุ
-        sheet.append_row([
-            now.strftime("%d/%m/%Y %H:%M"),
-            data.get('type'),
-            data.get('category'),
-            float(data.get('amount', 0)),
-            data.get('note')
-        ])
-        return True
+        records = summary_sheet.get_all_records()
+        found = False
+        
+        # ค้นหาว่าเดือน+ประเภท+หมวดหมู่นี้ มีอยู่แล้วหรือยัง
+        for i, row in enumerate(records):
+            if str(row['Month']) == month_str and row['Type'] == data['type'] and row['Category'] == data['category']:
+                new_amount = float(row['Amount']) + float(data['amount'])
+                summary_sheet.update_cell(i + 2, 4, new_amount) # อัปเดตช่อง Amount (Column 4)
+                found = True
+                break
+        
+        # ถ้ายังไม่มี ให้เพิ่มแถวใหม่
+        if not found:
+            summary_sheet.append_row([month_str, data['type'], data['category'], data['amount']])
     except Exception as e:
-        print(f"Error saving to sheet: {e}")
-        return False
+        print(f"Summary Update Error: {e}")
+
+def get_total_summary(mode="simple"):
+    """ดึงข้อมูลจากหน้า Summary มาตอบ"""
+    try:
+        client = get_google_client()
+        summary_sheet = client.open('LotteryData').worksheet('Summary')
+        records = summary_sheet.get_all_records()
+        
+        tz = pytz.timezone('Asia/Bangkok')
+        month_str = datetime.now(tz).strftime("%m/%Y")
+        
+        total_income = 0
+        total_expense = 0
+        categories = []
+
+        for r in records:
+            if r['Month'] == month_str:
+                amt = float(r['Amount'])
+                if r['Type'] == 'รายรับ':
+                    total_income += amt
+                else:
+                    total_expense += amt
+                    categories.append(f"- {r['Category']}: {amt:,.2f} บาท")
+
+        if mode == "simple":
+            return (f"📊 สรุปยอดรวมเดือน {month_str}\n"
+                    f"💰 รายรับ: {total_income:,.2f} บาท\n"
+                    f"💸 รายจ่าย: {total_expense:,.2f} บาท\n"
+                    f"คงเหลือ: {(total_income - total_expense):,.2f} บาทจ้า")
+        else:
+            cat_text = "\n".join(categories) if categories else "ไม่มีรายการจ้า"
+            return f"📂 รายจ่ายแยกตามหมวดหมู่ ({month_str}):\n{cat_text}"
+            
+    except Exception as e:
+        return f"❌ ดึงข้อมูลสรุปไม่ได้จ้า: {str(e)}"
 
 def get_gemini_response(user_text, user_id):
-    if not GENAI_API_KEY:
-        return "⚠️ กรุณาตั้งค่า GEMINI_API_KEY บน Render ก่อนครับ"
+    if not GENAI_API_KEY: return "⚠️ Missing API Key"
+
+    # --- เช็คคำสั่งสรุปยอด ---
+    if "สรุปรายรับรายจ่าย" in user_text or "สรุปยอดเดือนนี้" in user_text:
+        return get_total_summary(mode="simple")
+    if "แยกตามหมวดหมู่" in user_text:
+        return get_total_summary(mode="detail")
 
     try:
-        # 1. เตรียมข้อมูลเวลาปัจจุบัน
         tz = pytz.timezone('Asia/Bangkok')
         current_time = datetime.now(tz).strftime("%d/%m/%Y %H:%M:%S")
 
-        # 2. ตั้งค่า System Instruction (หัวใจของระบบเลขาบัญชี)
-        system_instruction = f"""
-        คุณคือ 'My Assistant' เลขาส่วนตัวที่เก่งเรื่องบัญชีและใจดีเหมือนป้านวล
-        ขณะนี้เวลาประเทศไทยคือ: {current_time}
-
-        หน้าที่ของคุณ:
-        1. หากผู้ใช้พิมพ์รายการเกี่ยวกับเงิน (รายรับหรือรายจ่าย) เช่น 'ซื้อข้าว 50' หรือ 'เงินเดือนออก 30000'
-           คุณต้องตอบกลับเป็น JSON รูปแบบนี้เท่านั้น:
-           {{"action": "record", "type": "รายจ่าย/รายรับ", "category": "หมวดหมู่", "amount": ตัวเลข, "note": "รายละเอียด"}}
-
-        2. หากผู้ใช้ถามคำถามทั่วไป หรือถามเวลา ให้ตอบอย่างสุภาพ ลงท้ายด้วย 'จ้า' หรือ 'ครับ' ตามความเหมาะสม
-        3. หากผู้ใช้ถามเรื่องหวยหรือเลขเด็ด ให้บอกว่า 'กำลังเรียกดูสถิติให้รอสักครู่นะจ๊ะ' (เพื่อให้ระบบหลักทำงานต่อ)
-        """
-
-        # 3. เชื่อมต่อโมเดล (ใช้ชื่อรุ่นที่คุณรันสำเร็จ)
         genai.configure(api_key=GENAI_API_KEY)
         model = genai.GenerativeModel(
-            model_name='gemini-2.5-flash', 
-            system_instruction=system_instruction
+            model_name='gemini-2.5-flash',
+            system_instruction=f"คุณคือเลขาส่วนตัวที่เก่งเรื่องบัญชี เวลาปัจจุบัน {current_time}. "
+                               f"หากผู้ใช้พิมพ์รายการเงิน ให้ตอบ JSON รูปแบบ: "
+                               f'{{"action": "record", "type": "รายจ่าย/รายรับ", "category": "หมวดหมู่", "amount": ตัวเลข, "note": "รายละเอียด"}}'
         )
         
-        # 4. ส่งข้อความไปประมวลผล
         response = model.generate_content(user_text)
         res_text = response.text
 
-        # 5. ตรวจสอบว่าต้องบันทึกบัญชีหรือไม่
         if '{"action": "record"' in res_text:
-            try:
-                # สกัด JSON ออกจากคำตอบ (เผื่อ AI มีข้อความอื่นปนมา)
-                start_index = res_text.find('{')
-                end_index = res_text.rfind('}') + 1
-                json_str = res_text[start_index:end_index]
-                data = json.loads(json_str)
-                
-                if save_to_accounting_sheet(data):
-                    return f"✅ จดบันทึกให้แล้วจ้า: {data['note']} {data['amount']} บาท (หมวด{data['category']})"
-                else:
-                    return "❌ เกิดปัญหาขณะบันทึกลง Google Sheet จ้า"
-            except:
-                return res_text # หากแปลง JSON พลาดให้ส่งข้อความปกติ
+            start = res_text.find('{')
+            end = res_text.rfind('}') + 1
+            data = json.loads(res_text[start:end])
+            
+            # บันทึกลงหน้า Accounting (สมุดเล่มหลัก)
+            client = get_google_client()
+            acc_sheet = client.open('LotteryData').worksheet('Accounting')
+            acc_sheet.append_row([datetime.now(tz).strftime("%d/%m/%Y %H:%M"), data['type'], data['category'], data['amount'], data['note']])
+            
+            # อัปเดตยอดรวมในหน้า Summary (สมุดเล่มสรุป)
+            update_summary(data)
+            
+            return f"✅ จดบันทึกเรียบร้อย: {data['note']} {data['amount']} บาทจ้า"
         
-        # ส่งคำตอบปกติกลับไป
         return res_text
-
     except Exception as e:
-        return f"❌ ขออภัยจ้า สมองขัดข้องชั่วคราว: {str(e)}"
+        return f"❌ ข้อผิดพลาด: {str(e)}"
