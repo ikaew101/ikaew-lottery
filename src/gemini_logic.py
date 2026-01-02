@@ -1,21 +1,36 @@
 import google.generativeai as genai
 import gspread
-from oauth2client.service_account import ServiceAccountCredentials
+from google.oauth2.service_account import Credentials # ใช้ตัวใหม่ที่เสถียรกว่า
 import os
 import json
 from datetime import datetime
 import pytz
-import re  # เพิ่ม module สำหรับจัดการข้อความ
+import re
 
 # --- Config ---
 GENAI_API_KEY = os.getenv('GEMINI_API_KEY')
 
 def get_google_client():
-    scope = ["[https://spreadsheets.google.com/feeds](https://spreadsheets.google.com/feeds)", "[https://www.googleapis.com/auth/drive](https://www.googleapis.com/auth/drive)"]
-    if os.getenv('GOOGLE_CREDENTIALS_JSON'):
-        creds_dict = json.loads(os.getenv('GOOGLE_CREDENTIALS_JSON'))
-        return gspread.authorize(ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope))
-    return gspread.authorize(ServiceAccountCredentials.from_json_keyfile_name('core/credentials.json', scope))
+    """เชื่อมต่อกับ Google Sheets API ด้วยระบบ google-auth (New Standard)"""
+    scopes = [
+        "https://www.googleapis.com/auth/spreadsheets",
+        "https://www.googleapis.com/auth/drive"
+    ]
+    
+    try:
+        # กรณีใช้บน Render (ดึง JSON จาก Environment Variable)
+        if os.getenv('GOOGLE_CREDENTIALS_JSON'):
+            creds_dict = json.loads(os.getenv('GOOGLE_CREDENTIALS_JSON'))
+            creds = Credentials.from_service_account_info(creds_dict, scopes=scopes)
+        
+        # กรณีรันบนเครื่องตัวเอง (ดึงจากไฟล์)
+        else:
+            creds = Credentials.from_service_account_file('core/credentials.json', scopes=scopes)
+            
+        return gspread.authorize(creds)
+    except Exception as e:
+        print(f"Auth Error: {e}")
+        raise e
 
 # --- Functions จัดการ Google Sheet ---
 
@@ -28,7 +43,7 @@ def save_to_accounting_sheet(data):
         sheet.append_row([
             now.strftime("%d/%m/%Y %H:%M"),
             data.get('type'),
-            data.get('category'), # หมวดหมู่จะตรงกันเป๊ะแล้ว
+            data.get('category'),
             float(data.get('amount', 0)),
             data.get('note')
         ])
@@ -47,7 +62,6 @@ def update_summary(data):
         found = False
         
         for i, row in enumerate(records):
-            # เปรียบเทียบแบบ String เพื่อความชัวร์
             if str(row['Month']) == month_str and row['Type'] == data['type'] and row['Category'] == data['category']:
                 new_amount = float(row['Amount']) + float(data['amount'])
                 sheet.update_cell(i + 2, 4, new_amount) 
@@ -69,7 +83,7 @@ def get_total_summary(mode="simple"):
         
         total_income = 0
         total_expense = 0
-        categories = {} # ใช้ Dict เพื่อรวมยอดหมวดเดียวกัน
+        categories = {}
 
         for r in records:
             if str(r['Month']) == month_str:
@@ -78,7 +92,6 @@ def get_total_summary(mode="simple"):
                     total_income += amt
                 else:
                     total_expense += amt
-                    # รวมยอดหมวดหมู่เดียวกันเข้าด้วยกัน (แก้ปัญหาหมวดซ้ำในรายงาน)
                     cat_name = r['Category']
                     categories[cat_name] = categories.get(cat_name, 0) + amt
 
@@ -109,7 +122,6 @@ def get_gemini_response(user_text, user_id):
         tz = pytz.timezone('Asia/Bangkok')
         current_time = datetime.now(tz).strftime("%d/%m/%Y %H:%M:%S")
         
-        # [แก้จุดที่ 2] ล็อคหมวดหมู่มาตรฐาน เพื่อไม่ให้ AI คิดชื่อเองมั่ว
         system_instruction = f"""
         คุณคือเลขาส่วนตัว 'My Assistant' ที่ใจดีและเก่งบัญชี เวลา: {current_time}
         
@@ -132,11 +144,7 @@ def get_gemini_response(user_text, user_id):
         response = model.generate_content(user_text)
         res_text = response.text.strip()
 
-        # [แก้จุดที่ 1] ระบบทำความสะอาดข้อความที่ฉลาดขึ้น
-        # 1. ลบ ```json และ ``` ออก ไม่ว่าจะอยู่ตรงไหน
         cleaned_text = re.sub(r'```json|```', '', res_text).strip()
-        
-        # 2. ค้นหา { และ } เพื่อดึงเฉพาะ JSON ออกมา
         start_index = cleaned_text.find('{')
         end_index = cleaned_text.rfind('}') + 1
 
@@ -150,7 +158,7 @@ def get_gemini_response(user_text, user_id):
                     update_summary(data)
                     return f"✅ จดเรียบร้อย!\nรายการ: {data.get('note')}\nจำนวน: {data.get('amount')} บาท\nหมวด: {data.get('category')}"
             except json.JSONDecodeError:
-                pass # ถ้าแปลงไม่ได้ ก็ให้ถือว่าเป็นข้อความธรรมดา
+                pass
         
         return res_text
 
