@@ -1,5 +1,5 @@
 # app.py
-from flask import Flask, request, abort
+from flask import Flask, request, abort, render_template, jsonify
 from linebot import LineBotApi, WebhookHandler
 from linebot.exceptions import InvalidSignatureError
 from linebot.models import MessageEvent, TextMessage, TextSendMessage
@@ -53,6 +53,16 @@ def handle_message(event):
         event.reply_token,
         TextSendMessage(text=reply_text)
     )
+
+@app.route('/dashboard')
+def dashboard_page():
+    return render_template('dashboard.html')
+
+# 2. API สำหรับส่งข้อมูล JSON ให้กราฟ
+@app.route('/api/summary')
+def summary_api():
+    data = gemini_logic.get_dashboard_data()
+    return jsonify(data)
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))

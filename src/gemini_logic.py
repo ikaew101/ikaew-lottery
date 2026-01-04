@@ -210,3 +210,47 @@ def get_gemini_response(user_text, user_id):
 
     except Exception as e:
         return f"❌ ระบบขัดข้อง: {str(e)}"
+
+def get_dashboard_data():
+    """ดึงข้อมูลสรุปยอดเดือนนี้ เพื่อส่งให้หน้าเว็บทำกราฟ"""
+    try:
+        client = get_google_client()
+        sheet = client.open('LotteryData').worksheet('Summary')
+        records = sheet.get_all_records()
+        
+        tz = pytz.timezone('Asia/Bangkok')
+        month_str = datetime.now(tz).strftime("%m/%Y")
+        
+        categories = {}
+        total_income = 0
+        total_expense = 0
+        
+        for r in records:
+            # ดึงเฉพาะข้อมูลเดือนปัจจุบัน
+            if str(r['Month']) == month_str:
+                amt = float(r['Amount'])
+                if r['Type'] == 'รายรับ':
+                    total_income += amt
+                else:
+                    total_expense += amt
+                    # รวมยอดตามหมวดหมู่
+                    cat = r['Category']
+                    categories[cat] = categories.get(cat, 0) + amt
+        
+        # เตรียมข้อมูลส่งกลับเป็น JSON
+        # แปลงข้อมูลกราฟ (แยกชื่อหมวดหมู่ และ ตัวเลขออกจากกัน)
+        chart_labels = list(categories.keys())
+        chart_data = list(categories.values())
+        
+        return {
+            "month": month_str,
+            "income": total_income,
+            "expense": total_expense,
+            "balance": total_income - total_expense,
+            "chart_labels": chart_labels,
+            "chart_data": chart_data
+        }
+        
+    except Exception as e:
+        print(f"Dashboard Error: {e}")
+        return {}
