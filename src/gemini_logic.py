@@ -7,14 +7,13 @@ from datetime import datetime
 import pytz
 import re
 import uuid
-import cloudscraper # ใช้ตัวนี้ช่วยค้นหาข้อมูล
+import cloudscraper
 from bs4 import BeautifulSoup
 
 # --- Config ---
 GENAI_API_KEY = os.getenv('GEMINI_API_KEY')
 
 def get_google_client():
-    """เชื่อมต่อ Google Sheets"""
     scopes = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
     try:
         if os.getenv('GOOGLE_CREDENTIALS_JSON'):
@@ -26,59 +25,37 @@ def get_google_client():
     except Exception as e:
         raise Exception(f"Auth Error: {str(e)}")
 
-# --- Search Function (เขียนเอง ไม่ง้อ Tools) ---
+# --- Search Function ---
 def search_weather_or_info(query):
-    """ฟังก์ชันค้นหาข้อมูลเบื้องต้นจาก Google Search (แบบ Manual)"""
     try:
         scraper = cloudscraper.create_scraper()
-        # ค้นหาผ่าน DuckDuckGo (HTML แกะง่ายกว่า Google และไม่ค่อยบล็อกบอท)
         url = f"https://html.duckduckgo.com/html/?q={query}"
         headers = {'User-Agent': 'Mozilla/5.0'}
         res = scraper.get(url, headers=headers)
-        
         if res.status_code == 200:
             soup = BeautifulSoup(res.text, 'html.parser')
-            # ดึง Text จากผลการค้นหา 3 อันดับแรก
-            results = []
-            for result in soup.find_all('a', class_='result__a', limit=3):
-                results.append(result.get_text())
-            
-            snippets = []
-            for snippet in soup.find_all('a', class_='result__snippet', limit=3):
-                snippets.append(snippet.get_text())
-                
-            combined_info = " ".join(results) + " " + " ".join(snippets)
-            return combined_info[:2000] # ตัดข้อความไม่ให้ยาวเกินไป
+            results = [r.get_text() for r in soup.find_all('a', class_='result__a', limit=3)]
+            snippets = [s.get_text() for s in soup.find_all('a', class_='result__snippet', limit=3)]
+            return (" ".join(results) + " " + " ".join(snippets))[:2500]
     except Exception as e:
         print(f"Search Error: {e}")
     return ""
 
-# --- Functions จัดการ Google Sheet ---
-
+# --- Sheet Functions ---
 def save_to_accounting_sheet(data):
     try:
         client = get_google_client()
-        try:
-            spreadsheet = client.open('LotteryData')
-        except gspread.SpreadsheetNotFound:
-            return False, "หาไฟล์ชื่อ 'LotteryData' ไม่เจอ", ""
-
-        try:
-            sheet = spreadsheet.worksheet('Accounting')
-        except gspread.WorksheetNotFound:
-            return False, "ไม่พบ Tab ชื่อ 'Accounting'", ""
+        try: spreadsheet = client.open('LotteryData')
+        except: return False, "หาไฟล์ 'LotteryData' ไม่เจอ", ""
+        try: sheet = spreadsheet.worksheet('Accounting')
+        except: return False, "ไม่พบ Tab 'Accounting'", ""
 
         tz = pytz.timezone('Asia/Bangkok')
         now = datetime.now(tz)
         tx_id = f"tx_{str(uuid.uuid4())[:8]}"
-        
         sheet.append_row([
             now.strftime("%d/%m/%Y %H:%M"),
-            data.get('type'),
-            data.get('category'),
-            float(data.get('amount', 0)),
-            data.get('note'),
-            tx_id
+            data.get('type'), data.get('category'), float(data.get('amount', 0)), data.get('note'), tx_id
         ])
         return True, "", tx_id
     except Exception as e:
@@ -110,101 +87,88 @@ def get_total_summary(mode="simple"):
         records = sheet.get_all_records()
         tz = pytz.timezone('Asia/Bangkok')
         month_str = datetime.now(tz).strftime("%m/%Y")
-        
         total_income = 0
         total_expense = 0
         categories = {}
-
         for r in records:
             if str(r['Month']) == month_str:
                 amt = float(r['Amount'])
-                if r['Type'] == 'รายรับ':
-                    total_income += amt
+                if r['Type'] == 'รายรับ': total_income += amt
                 else:
                     total_expense += amt
-                    cat_name = r['Category']
-                    categories[cat_name] = categories.get(cat_name, 0) + amt
-
+                    categories[r['Category']] = categories.get(r['Category'], 0) + amt
         if mode == "simple":
             return (f"📊 สรุปยอดเดือน {month_str}\n💰 รายรับ: {total_income:,.2f} บาท\n💸 รายจ่าย: {total_expense:,.2f} บาท\nคงเหลือ: {(total_income - total_expense):,.2f} บาทจ้า")
         else:
             cat_list = [f"- {k}: {v:,.2f} บาท" for k, v in categories.items()]
-            cat_text = "\n".join(cat_list) if cat_list else "ยังไม่มีรายการจ้า"
-            return f"📂 รายจ่ายแยกหมวดหมู่ ({month_str}):\n{cat_text}"
+            return f"📂 รายจ่ายแยกหมวดหมู่ ({month_str}):\n" + ("\n".join(cat_list) if cat_list else "ยังไม่มีรายการจ้า")
     except Exception as e:
         return f"❌ ดึงข้อมูลไม่ได้จ้า: {str(e)}"
 
-# --- Main Logic ---
+# --- Main Logic with SELF-DIAGNOSTIC ---
 
 def get_gemini_response(user_text, user_id):
     if not GENAI_API_KEY: return "⚠️ Missing API Key"
 
-    # เช็คคำสั่งดูยอดเงิน (บัญชี)
     if ("สรุป" in user_text or "ยอด" in user_text) and "เดือนนี้" in user_text and "หมวดหมู่" not in user_text:
         return get_total_summary(mode="simple")
     if "หมวดหมู่" in user_text:
         return get_total_summary(mode="detail")
 
     try:
+        genai.configure(api_key=GENAI_API_KEY)
         tz = pytz.timezone('Asia/Bangkok')
         current_time = datetime.now(tz).strftime("%d/%m/%Y %H:%M:%S")
         
-        # --- ส่วนที่ปรับปรุง: ระบบค้นหาข้อมูล (Search Logic) ---
+        # 1. ระบบค้นหา
         external_context = ""
         do_search = False
         search_query = user_text
-
-        # 1. ค้นหาอัตโนมัติ ถ้ามีคำว่า อากาศ, ราคา, ข่าว (เหมือนเดิม)
-        if any(kw in user_text for kw in ["อากาศ", "weather", "ราคา", "ข่าว"]):
-            do_search = True
-        
-        # 2. [เพิ่มใหม่] ค้นหาตามสั่ง ถ้าพิมพ์นำหน้าว่า "ค้นหา" หรือ "search"
-        # เช่น "ค้นหา ผลบอลเมื่อคืน" -> ระบบจะไป Search คำว่า "ผลบอลเมื่อคืน" ให้
+        if any(kw in user_text for kw in ["อากาศ", "weather", "ราคา", "ข่าว"]): do_search = True
         if user_text.startswith("ค้นหา") or user_text.lower().startswith("search"):
-            do_search = True
-            # ตัดคำว่า "ค้นหา" ออก เพื่อเอาเนื้อหาไปเสิร์ช
-            search_query = user_text.replace("ค้นหา", "").replace("search", "").strip()
-
+             do_search = True
+             search_query = user_text.replace("ค้นหา", "").replace("search", "").strip()
         if do_search and search_query:
-            print(f"Searching for: {search_query}") # Log ดูว่าค้นหาอะไร
-            search_result = search_weather_or_info(search_query)
-            if search_result:
-                external_context = f"\n[ข้อมูลล่าสุดจาก Google Search]: {search_result}\n"
+            print(f"Searching: {search_query}")
+            res = search_weather_or_info(search_query)
+            if res: external_context = f"\n[ข้อมูลจากการค้นหา]: {res}\n"
 
-        # --- จบส่วนค้นหา ---
-
-        # เตรียม Prompt
+        # 2. เตรียม Prompt
         system_instruction = f"""
-        คุณคือเลขาส่วนตัว 'My Assistant' เก่งบัญชี เวลาปัจจุบัน: {current_time}
-        
-        {external_context} 
-        (หากมีข้อมูลจาก Google Search ด้านบน ให้อ้างอิงข้อมูลนั้นในการตอบคำถามได้เลย)
-
+        คุณคือเลขาส่วนตัว 'My Assistant' เก่งบัญชี เวลา: {current_time}
+        {external_context}
         หน้าที่:
-        1. ถ้ามีข้อมูลการค้นหา ให้ตอบคำถามโดยอ้างอิงข้อมูลนั้น
-        2. ถ้าผู้ใช้พิมพ์รายการเงิน ตอบ JSON Array:
-           [
-             {{"action": "record", "type": "รายจ่าย/รายรับ", "category": "หมวดหมู่", "amount": ตัวเลข, "note": "รายละเอียด"}}
-           ]
+        1. อ้างอิงผลการค้นหาด้านบนถ้ามี
+        2. ถ้าพิมพ์รายการเงิน ตอบ JSON Array: [{{"action": "record", "type": "รายจ่าย/รายรับ", "category": "หมวดหมู่", "amount": ตัวเลข, "note": "รายละเอียด"}}]
            หมวดหมู่: ['อาหาร', 'เดินทาง', 'ช้อปปิ้ง', 'ของใช้ส่วนตัว', 'ค่าบ้าน/รถ', 'บิลค่าน้ำไฟ', 'บันเทิง', 'สุขภาพ', 'เงินออม', 'รายรับ', 'อื่นๆ']
-        3. ถ้าเป็นคำถามทั่วไป (ความรู้รอบตัว, เขียนโค้ด, ปรึกษา) ให้ตอบด้วยความรู้ของคุณเองอย่างฉลาดและสุภาพ
+        3. คำถามทั่วไปตอบปกติ
         """
 
-        genai.configure(api_key=GENAI_API_KEY)
+        # 3. ลองใช้โมเดล 'gemini-1.5-flash-8b' (ตัวเล็ก เร็ว และแยกโควต้าจากตัวอื่น)
+        # หรือใช้ 'gemini-pro' (ตัวเก่าแต่ชัวร์)
+        target_model = 'gemini-1.5-flash-8b' 
         
-        # ใช้ gemini-2.5-flash (ตัวที่คุณยืนยันว่าใช้ได้)
-        model = genai.GenerativeModel(
-            model_name='gemini-2.0-flash-001',
-            system_instruction=system_instruction
-        )
-        
-        response = model.generate_content(user_text)
-        res_text = response.text.strip()
+        try:
+            model = genai.GenerativeModel(model_name=target_model, system_instruction=system_instruction)
+            response = model.generate_content(user_text)
+            res_text = response.text.strip()
+            
+        except Exception as ai_error:
+            # 🚨 ถ้าพัง ให้ไปดึงรายชื่อโมเดลที่ใช้ได้จริงมาแสดง
+            available_models = []
+            try:
+                for m in genai.list_models():
+                    if 'generateContent' in m.supported_generation_methods:
+                        available_models.append(m.name)
+            except:
+                available_models = ["ดึงข้อมูลไม่ได้"]
+            
+            error_msg = f"❌ โมเดล {target_model} ใช้งานไม่ได้ ({str(ai_error)})\n\n💡 รายชื่อโมเดลที่บัญชีคุณใช้ได้จริง:\n" + "\n".join(available_models)
+            return error_msg
+
+        # 4. ประมวลผลคำตอบ
         cleaned_text = re.sub(r'```json|```', '', res_text).strip()
-        
-        # ... (Logic แกะ JSON บัญชี เหมือนเดิมทุกประการ ไม่ต้องแก้) ...
         start_index = -1
-        end_index = -1
         if '[' in cleaned_text and ']' in cleaned_text:
             start_index = cleaned_text.find('[')
             end_index = cleaned_text.rfind(']') + 1
@@ -214,14 +178,11 @@ def get_gemini_response(user_text, user_id):
 
         if start_index != -1 and end_index != -1:
             try:
-                json_str = cleaned_text[start_index:end_index]
-                data = json.loads(json_str)
+                data = json.loads(cleaned_text[start_index:end_index])
                 if isinstance(data, dict): data = [data]
-                
                 recorded_items = []
                 failed_items = []
                 total_amount = 0
-                
                 for item in data:
                     if item.get('action') == 'record':
                         success, error_msg, tx_id = save_to_accounting_sheet(item)
@@ -231,19 +192,12 @@ def get_gemini_response(user_text, user_id):
                             total_amount += float(item.get('amount', 0))
                         else:
                             failed_items.append(f"❌ บันทึกไม่ได้: {error_msg}")
-                
-                reply_msg = ""
                 if recorded_items:
-                    reply_msg += f"✅ จดบันทึกเรียบร้อย!\n" + "\n".join(recorded_items)
-                    reply_msg += f"\n\nรวม: {total_amount:,.2f} บาท"
-                
-                if failed_items:
-                    reply_msg += "\n\n" + "\n".join(failed_items)
-                    
-                if reply_msg:
-                    return reply_msg
-            except json.JSONDecodeError:
-                pass
+                    msg = f"✅ จดเรียบร้อย!\n" + "\n".join(recorded_items)
+                    msg += f"\n\nรวม: {total_amount:,.2f} บาท"
+                    if failed_items: msg += "\n\n" + "\n".join(failed_items)
+                    return msg
+            except: pass
         
         return res_text
 
