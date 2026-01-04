@@ -105,7 +105,7 @@ def get_total_summary(mode="simple"):
     except Exception as e:
         return f"❌ ดึงข้อมูลไม่ได้จ้า: {str(e)}"
 
-# --- Main Logic with SELF-DIAGNOSTIC ---
+# --- Main Logic with VALID MODEL LIST ---
 
 def get_gemini_response(user_text, user_id):
     if not GENAI_API_KEY: return "⚠️ Missing API Key"
@@ -123,17 +123,16 @@ def get_gemini_response(user_text, user_id):
         # 1. ระบบค้นหา
         external_context = ""
         do_search = False
-        search_query = user_text
         if any(kw in user_text for kw in ["อากาศ", "weather", "ราคา", "ข่าว"]): do_search = True
         if user_text.startswith("ค้นหา") or user_text.lower().startswith("search"):
              do_search = True
-             search_query = user_text.replace("ค้นหา", "").replace("search", "").strip()
-        if do_search and search_query:
-            print(f"Searching: {search_query}")
-            res = search_weather_or_info(search_query)
-            if res: external_context = f"\n[ข้อมูลจากการค้นหา]: {res}\n"
+             query = user_text.replace("ค้นหา", "").replace("search", "").strip()
+             if query:
+                print(f"Searching: {query}")
+                res = search_weather_or_info(query)
+                if res: external_context = f"\n[ข้อมูลจากการค้นหา]: {res}\n"
 
-        # 2. เตรียม Prompt
+        # 2. Prompt
         system_instruction = f"""
         คุณคือเลขาส่วนตัว 'My Assistant' เก่งบัญชี เวลา: {current_time}
         {external_context}
@@ -144,29 +143,37 @@ def get_gemini_response(user_text, user_id):
         3. คำถามทั่วไปตอบปกติ
         """
 
-        # 3. ลองใช้โมเดล 'gemini-1.5-flash-8b' (ตัวเล็ก เร็ว และแยกโควต้าจากตัวอื่น)
-        # หรือใช้ 'gemini-pro' (ตัวเก่าแต่ชัวร์)
-        target_model = 'gemini-1.5-flash-8b' 
-        
-        try:
-            model = genai.GenerativeModel(model_name=target_model, system_instruction=system_instruction)
-            response = model.generate_content(user_text)
-            res_text = response.text.strip()
-            
-        except Exception as ai_error:
-            # 🚨 ถ้าพัง ให้ไปดึงรายชื่อโมเดลที่ใช้ได้จริงมาแสดง
-            available_models = []
-            try:
-                for m in genai.list_models():
-                    if 'generateContent' in m.supported_generation_methods:
-                        available_models.append(m.name)
-            except:
-                available_models = ["ดึงข้อมูลไม่ได้"]
-            
-            error_msg = f"❌ โมเดล {target_model} ใช้งานไม่ได้ ({str(ai_error)})\n\n💡 รายชื่อโมเดลที่บัญชีคุณใช้ได้จริง:\n" + "\n".join(available_models)
-            return error_msg
+        # 3. [สำคัญ] รายชื่อโมเดลที่ใช้ได้จริง (เรียงจากโควต้าเยอะ -> น้อย)
+        # เราจะไม่เดาชื่อแล้ว เอาชื่อจากที่คุณส่งมาใส่เลย
+        models_to_try = [
+            'gemini-2.0-flash-lite',         # หวังผลตัวนี้สุด (Lite = ถูก/ฟรีเยอะ)
+            'gemini-2.0-flash-exp',          # ตัวทดลอง มักใจป้ำให้ใช้ฟรี
+            'gemini-2.5-flash-lite',         # Lite ตัวใหม่
+            'gemini-2.5-flash',              # ตัวนี้ใช้ได้ชัวร์ (แต่โควต้าน้อย ไว้กันตาย)
+            'gemini-flash-lite-latest'       # เผื่อฟลุ๊ค
+        ]
 
-        # 4. ประมวลผลคำตอบ
+        response = None
+        used_model = ""
+        last_error = ""
+
+        # วนลูปจนกว่าจะเจอตัวที่ยอมให้ใช้
+        for model_name in models_to_try:
+            try:
+                # print(f"Trying model: {model_name}")
+                model = genai.GenerativeModel(model_name=model_name, system_instruction=system_instruction)
+                response = model.generate_content(user_text)
+                used_model = model_name
+                break # เจอตัวที่ใช่ หยุดทันที
+            except Exception as e:
+                last_error = str(e)
+                continue 
+        
+        if not response:
+            return f"❌ ทุกโมเดลปฏิเสธการทำงาน (Error ล่าสุด: {last_error})"
+
+        # 4. ประมวลผล
+        res_text = response.text.strip()
         cleaned_text = re.sub(r'```json|```', '', res_text).strip()
         start_index = -1
         if '[' in cleaned_text and ']' in cleaned_text:
@@ -193,7 +200,7 @@ def get_gemini_response(user_text, user_id):
                         else:
                             failed_items.append(f"❌ บันทึกไม่ได้: {error_msg}")
                 if recorded_items:
-                    msg = f"✅ จดเรียบร้อย!\n" + "\n".join(recorded_items)
+                    msg = f"✅ จดเรียบร้อย! (Model: {used_model})\n" + "\n".join(recorded_items)
                     msg += f"\n\nรวม: {total_amount:,.2f} บาท"
                     if failed_items: msg += "\n\n" + "\n".join(failed_items)
                     return msg
