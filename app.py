@@ -6,6 +6,7 @@ from linebot.models import MessageEvent, TextMessage, TextSendMessage
 import os
 
 # Import ทั้ง 2 แผนก
+from src import gemini_logic
 from src.bot_logic import get_prediction_message   # แผนกหวย
 from src.gemini_logic import get_gemini_response   # แผนกคุยเล่น (มาใหม่)
 
